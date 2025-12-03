@@ -9,18 +9,17 @@ separately at the end.
 ## Table of Contents
 
 1. [Python Version Compatibility](#python-version-compatibility)
-2. [Import Conventions](#import-conventions)
+2. [Naming Conventions](#naming-conventions)
 3. [Type Annotation Patterns](#type-annotation-patterns)
-4. [Naming Conventions](#naming-conventions)
-5. [Class Design Patterns](#class-design-patterns)
-6. [Rich Protocol Patterns](#rich-protocol-patterns)
-7. [Docstring and Comment Guidelines](#docstring-and-comment-guidelines)
-8. [Error Handling](#error-handling)
+4. [Docstring and Comment Guidelines](#docstring-and-comment-guidelines)
+5. [Deprecation Patterns](#deprecation-patterns)
+6. [Imports and Module Organization](#imports-and-module-organization)
+7. [Error Handling](#error-handling)
+8. [Class Design Patterns](#class-design-patterns)
 9. [Performance Patterns](#performance-patterns)
-10. [Module Organization](#module-organization)
-11. [Deprecation Patterns](#deprecation-patterns)
-12. [Automatically Enforced (Reference Only)](#automatically-enforced-reference-only)
-13. [Open Questions](#open-questions)
+10. [Rich Protocol Patterns](#rich-protocol-patterns)
+11. [Automatically Enforced (Reference Only)](#automatically-enforced-reference-only)
+12. [Open Questions](#open-questions)
 
 ---
 
@@ -55,40 +54,38 @@ def method(self) -> Style:  # No quotes needed
 
 ---
 
-## Import Conventions
+## Naming Conventions
 
-### Relative Imports
-- Use relative imports for internal module references.
+### Variables and Functions
+- Use `snake_case`. Avoid abbreviations.
+
+### Classes
+- Use `PascalCase`.
+
+### Constants
+- Use `UPPER_SNAKE_CASE` for module-level constants.
 ```python
-from .style import Style, StyleType
-from .text import Text, TextType
-from . import errors
-from ._loop import loop_first, loop_last
+WINDOWS = sys.platform == "win32"
+NULL_STYLE = Style()
+DEFAULT_JUSTIFY: "JustifyMethod" = "default"
 ```
 
-### TYPE_CHECKING Guard
-- Use `TYPE_CHECKING` to avoid circular imports.
-- Import types only needed for annotations inside the guard.
+### Private Members
+- Prefix private attributes and methods with single underscore.
 ```python
-from typing import TYPE_CHECKING
+self._spans: List[Span] = []
 
-if TYPE_CHECKING:
-    from .console import Console, ConsoleOptions, RenderResult
+def _trim_spans(self) -> None: ...
 ```
 
-### Import Aliasing for Performance
-- Cache class references in local variables within hot loops.
-```python
-def some_method(self) -> None:
-    _Segment = Segment  # Local alias for performance
-    for item in items:
-        yield _Segment(...)
-```
+### Internal Modules
+- Internal utility modules start with underscore: `_loop.py`, `_pick.py`
 
-### Noqa for Re-exports
-- Use `# noqa: F401` for intentional re-exports.
+### Type Aliases
+- Type aliases use `PascalCase`.
 ```python
-from ._extension import load_ipython_extension  # noqa: F401
+StyleType = Union[str, "Style"]
+RenderResult = Iterable[Union[RenderableType, Segment]]
 ```
 
 ---
@@ -171,38 +168,214 @@ _console.__dict__ = new_console.__dict__  # type: ignore[assignment]
 
 ---
 
-## Naming Conventions
+## Docstring and Comment Guidelines
 
-### Variables and Functions
-- Use `snake_case`. Avoid abbreviations.
-
-### Classes
-- Use `PascalCase`.
-
-### Constants
-- Use `UPPER_SNAKE_CASE` for module-level constants.
+### Docstring Format
+- Google-style with Args/Returns sections.
+- Opening triple quotes on their own line for multi-line docstrings.
 ```python
-WINDOWS = sys.platform == "win32"
+def get_style_at_offset(self, console: "Console", offset: int) -> Style:
+    """Get the style of a character at given offset.
+
+    Args:
+        console (~Console): Console where text will be rendered.
+        offset (int): Offset into text (negative indexing supported).
+
+    Returns:
+        Style: A Style instance.
+    """
+```
+
+### Class Docstrings
+- Document `__init__` parameters in the class docstring.
+- Include usage examples when helpful.
+```python
+class Panel(JupyterMixin):
+    """A console renderable that draws a border around its contents.
+
+    Example:
+        >>> console.print(Panel("Hello, World!"))
+
+    Args:
+        renderable (RenderableType): A console renderable object.
+        box (Box): A Box instance that defines the look of the border.
+        title (Optional[TextType], optional): Optional title. Defaults to None.
+    """
+```
+
+### Field Docstrings
+- Use inline docstrings after NamedTuple/dataclass fields.
+```python
+class Measurement(NamedTuple):
+    minimum: int
+    """Minimum number of cells required to render."""
+    maximum: int
+    """Maximum number of cells required to render."""
+```
+
+### Comment Guidelines
+- Comments should explain "why", not "what".
+- Avoid obvious comments.
+```python
+# Good - explains why
+# Prevent potential infinite loop
+rich_visited_set: Set[type] = set()
+
+# Bad - states the obvious
+if offset < 0:
+    offset = len(self) + offset  # Convert negative to positive
+```
+
+### TODO Comments
+- Use `# TODO:` prefix.
+
+---
+
+## Deprecation Patterns
+
+### Docstring Deprecation Notice
+- Use `Warn:` section.
+```python
+class VerticalCenter(JupyterMixin):
+    """Vertically aligns a renderable.
+
+    Warn:
+        This class is deprecated and may be removed in a future version.
+        Use Align class with `vertical="middle"`.
+    """
+```
+
+### Runtime Deprecation Warnings
+```python
+import warnings
+
+def deprecated_function():
+    warnings.warn(
+        "deprecated_function is deprecated, use new_function instead",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+```
+
+---
+
+## Imports and Module Organization
+
+### Relative Imports
+- Use relative imports for internal module references.
+```python
+from .style import Style, StyleType
+from .text import Text, TextType
+from . import errors
+from ._loop import loop_first, loop_last
+```
+
+### TYPE_CHECKING Guard
+- Use `TYPE_CHECKING` to avoid circular imports.
+- Import types only needed for annotations inside the guard.
+```python
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .console import Console, ConsoleOptions, RenderResult
+```
+
+### Lazy Imports
+- Use to avoid circular dependencies.
+```python
+def get_console() -> "Console":
+    global _console
+    if _console is None:
+        from .console import Console
+        _console = Console()
+    return _console
+```
+
+### Noqa for Re-exports
+- Use `# noqa: F401` for intentional re-exports.
+```python
+from ._extension import load_ipython_extension  # noqa: F401
+```
+
+### __all__ Export List
+- Define for public API modules.
+```python
+__all__ = ["get_console", "reconfigure", "print", "inspect", "print_json"]
+```
+
+### Internal Utility Modules
+- Prefix with underscore: `_loop.py`, `_pick.py`
+- Keep focused on single responsibility.
+- Minimal dependencies on other Rich modules.
+
+### Singletons
+- Define at module level for common cases.
+```python
 NULL_STYLE = Style()
-DEFAULT_JUSTIFY: "JustifyMethod" = "default"
+_null_highlighter = NullHighlighter()
 ```
 
-### Private Members
-- Prefix private attributes and methods with single underscore.
+### Sentinel Objects
+- Use to distinguish "no value" from `None`.
 ```python
-self._spans: List[Span] = []
+class NoChange:
+    pass
 
-def _trim_spans(self) -> None: ...
+NO_CHANGE = NoChange()
+
+def update(self, value: Union[str, NoChange] = NO_CHANGE) -> None:
+    if not isinstance(value, NoChange):
+        self._value = value
 ```
 
-### Internal Modules
-- Internal utility modules start with underscore: `_loop.py`, `_pick.py`
-
-### Type Aliases
-- Type aliases use `PascalCase`.
+### Module Demo Pattern
+- Include `if __name__ == "__main__":` with `# pragma: no cover`.
 ```python
-StyleType = Union[str, "Style"]
-RenderResult = Iterable[Union[RenderableType, Segment]]
+if __name__ == "__main__":  # pragma: no cover
+    from rich.console import Console
+    console = Console()
+    ...
+```
+
+---
+
+## Error Handling
+
+### Custom Exception Hierarchy
+- Define custom exceptions inheriting from base exceptions.
+- Keep exception classes minimal.
+```python
+class ConsoleError(Exception):
+    """An error in console operation."""
+
+class StyleSyntaxError(ConsoleError):
+    """Style was badly formatted."""
+```
+
+### Exception Messages
+- Use descriptive messages with context.
+- Use `from None` to suppress chained exceptions when appropriate.
+```python
+raise errors.StyleSyntaxError(
+    f"unable to parse {word!r} as color; {error}"
+) from None
+```
+
+### Input Validation
+- Validate early in constructors.
+- Use `!r` to show the actual invalid value.
+```python
+if align not in ("left", "center", "right"):
+    raise ValueError(
+        f'invalid value for align, expected "left", "center", or "right" (not {align!r})'
+    )
+```
+
+### Assertions
+- Use for internal invariants with helpful messages.
+```python
+assert len(character) == 1, "Character must be a string of length 1"
+assert separator, "separator must not be empty"
 ```
 
 ---
@@ -314,159 +487,6 @@ class _RefreshThread(Thread):
 
 ---
 
-## Rich Protocol Patterns
-
-### __rich_console__ Protocol
-- Yields `Segment` objects or other renderables.
-```python
-def __rich_console__(
-    self, console: "Console", options: "ConsoleOptions"
-) -> "RenderResult":
-    yield Segment(self.text)
-    yield Segment("\n")
-```
-
-### __rich_measure__ Protocol
-- Returns a `Measurement` with minimum and maximum widths.
-```python
-def __rich_measure__(
-    self, console: "Console", options: "ConsoleOptions"
-) -> "Measurement":
-    return Measurement(min_width, max_width)
-```
-
-### __rich__ Protocol
-- Returns a Rich renderable object.
-```python
-def __rich__(self) -> "Text":
-    return Text(str(self))
-```
-
-### __rich_repr__ Protocol
-- Works with the `@rich_repr` decorator.
-```python
-from rich.repr import rich_repr, Result
-
-@rich_repr
-class Style:
-    def __rich_repr__(self) -> Result:
-        yield "color", self.color, None
-        yield "bgcolor", self.bgcolor, None
-```
-
-### JupyterMixin
-- Inherit to enable Jupyter notebook rendering.
-```python
-class Panel(JupyterMixin):
-    ...
-```
-
----
-
-## Docstring and Comment Guidelines
-
-### Docstring Format
-- Google-style with Args/Returns sections.
-- Opening triple quotes on their own line for multi-line docstrings.
-```python
-def get_style_at_offset(self, console: "Console", offset: int) -> Style:
-    """Get the style of a character at given offset.
-
-    Args:
-        console (~Console): Console where text will be rendered.
-        offset (int): Offset into text (negative indexing supported).
-
-    Returns:
-        Style: A Style instance.
-    """
-```
-
-### Class Docstrings
-- Document `__init__` parameters in the class docstring.
-- Include usage examples when helpful.
-```python
-class Panel(JupyterMixin):
-    """A console renderable that draws a border around its contents.
-
-    Example:
-        >>> console.print(Panel("Hello, World!"))
-
-    Args:
-        renderable (RenderableType): A console renderable object.
-        box (Box): A Box instance that defines the look of the border.
-        title (Optional[TextType], optional): Optional title. Defaults to None.
-    """
-```
-
-### Field Docstrings
-- Use inline docstrings after NamedTuple/dataclass fields.
-```python
-class Measurement(NamedTuple):
-    minimum: int
-    """Minimum number of cells required to render."""
-    maximum: int
-    """Maximum number of cells required to render."""
-```
-
-### Comment Guidelines
-- Comments should explain "why", not "what".
-- Avoid obvious comments.
-```python
-# Good - explains why
-# Prevent potential infinite loop
-rich_visited_set: Set[type] = set()
-
-# Bad - states the obvious
-if offset < 0:
-    offset = len(self) + offset  # Convert negative to positive
-```
-
-### TODO Comments
-- Use `# TODO:` prefix.
-
----
-
-## Error Handling
-
-### Custom Exception Hierarchy
-- Define custom exceptions inheriting from base exceptions.
-- Keep exception classes minimal.
-```python
-class ConsoleError(Exception):
-    """An error in console operation."""
-
-class StyleSyntaxError(ConsoleError):
-    """Style was badly formatted."""
-```
-
-### Exception Messages
-- Use descriptive messages with context.
-- Use `from None` to suppress chained exceptions when appropriate.
-```python
-raise errors.StyleSyntaxError(
-    f"unable to parse {word!r} as color; {error}"
-) from None
-```
-
-### Input Validation
-- Validate early in constructors.
-- Use `!r` to show the actual invalid value.
-```python
-if align not in ("left", "center", "right"):
-    raise ValueError(
-        f'invalid value for align, expected "left", "center", or "right" (not {align!r})'
-    )
-```
-
-### Assertions
-- Use for internal invariants with helpful messages.
-```python
-assert len(character) == 1, "Character must be a string of length 1"
-assert separator, "separator must not be empty"
-```
-
----
-
 ## Performance Patterns
 
 ### Local Variable Caching
@@ -520,85 +540,51 @@ return "".join(parts)
 
 ---
 
-## Module Organization
+## Rich Protocol Patterns
 
-### Module Demo Pattern
-- Include `if __name__ == "__main__":` with `# pragma: no cover`.
+### __rich_console__ Protocol
+- Yields `Segment` objects or other renderables.
 ```python
-if __name__ == "__main__":  # pragma: no cover
-    from rich.console import Console
-    console = Console()
+def __rich_console__(
+    self, console: "Console", options: "ConsoleOptions"
+) -> "RenderResult":
+    yield Segment(self.text)
+    yield Segment("\n")
+```
+
+### __rich_measure__ Protocol
+- Returns a `Measurement` with minimum and maximum widths.
+```python
+def __rich_measure__(
+    self, console: "Console", options: "ConsoleOptions"
+) -> "Measurement":
+    return Measurement(min_width, max_width)
+```
+
+### __rich__ Protocol
+- Returns a Rich renderable object.
+```python
+def __rich__(self) -> "Text":
+    return Text(str(self))
+```
+
+### __rich_repr__ Protocol
+- Works with the `@rich_repr` decorator.
+```python
+from rich.repr import rich_repr, Result
+
+@rich_repr
+class Style:
+    def __rich_repr__(self) -> Result:
+        yield "color", self.color, None
+        yield "bgcolor", self.bgcolor, None
+```
+
+### JupyterMixin
+- Inherit to enable Jupyter notebook rendering.
+```python
+class Panel(JupyterMixin):
     ...
-```
-
-### __all__ Export List
-- Define for public API modules.
-```python
-__all__ = ["get_console", "reconfigure", "print", "inspect", "print_json"]
-```
-
-### Singletons
-- Define at module level for common cases.
-```python
-NULL_STYLE = Style()
-_null_highlighter = NullHighlighter()
-```
-
-### Sentinel Objects
-- Use to distinguish "no value" from `None`.
-```python
-class NoChange:
-    pass
-
-NO_CHANGE = NoChange()
-
-def update(self, value: Union[str, NoChange] = NO_CHANGE) -> None:
-    if not isinstance(value, NoChange):
-        self._value = value
-```
-
-### Internal Utility Modules
-- Prefix with underscore: `_loop.py`, `_pick.py`
-- Keep focused on single responsibility.
-- Minimal dependencies on other Rich modules.
-
-### Lazy Imports
-- Use to avoid circular dependencies.
-```python
-def get_console() -> "Console":
-    global _console
-    if _console is None:
-        from .console import Console
-        _console = Console()
-    return _console
-```
-
----
-
-## Deprecation Patterns
-
-### Docstring Deprecation Notice
-- Use `Warn:` section.
-```python
-class VerticalCenter(JupyterMixin):
-    """Vertically aligns a renderable.
-
-    Warn:
-        This class is deprecated and may be removed in a future version.
-        Use Align class with `vertical="middle"`.
-    """
-```
-
-### Runtime Deprecation Warnings
-```python
-import warnings
-
-def deprecated_function():
-    warnings.warn(
-        "deprecated_function is deprecated, use new_function instead",
-        DeprecationWarning,
-        stacklevel=2,
-    )
 ```
 
 ---
