@@ -16,10 +16,13 @@ separately at the end.
 6. [Imports and Module Organization](#imports-and-module-organization)
 7. [Error Handling](#error-handling)
 8. [Class Design Patterns](#class-design-patterns)
-9. [Performance Patterns](#performance-patterns)
-10. [Rich Protocol Patterns](#rich-protocol-patterns)
-11. [Automatically Enforced (Reference Only)](#automatically-enforced-reference-only)
-12. [Open Questions](#open-questions)
+9. [API Design Principles](#api-design-principles)
+10. [Performance Patterns](#performance-patterns)
+11. [Testing Standards](#testing-standards)
+12. [Terminal Compatibility](#terminal-compatibility)
+13. [Rich Protocol Patterns](#rich-protocol-patterns)
+14. [Automatically Enforced (Reference Only)](#automatically-enforced-reference-only)
+15. [Open Questions](#open-questions)
 
 ---
 
@@ -57,7 +60,22 @@ def method(self) -> Style:  # No quotes needed
 ## Naming Conventions
 
 ### Variables and Functions
-- Use `snake_case`. Avoid abbreviations.
+- Use `snake_case`.
+- **No abbreviations** - use full descriptive names.
+- **No single-letter variables** (with rare exceptions like `i`, `j` in loops).
+- Variable names should describe **purpose**, not just type.
+```python
+# Good - describes purpose
+style_definition = "bold red"
+character_width = 2
+
+# Bad - abbreviations
+str_idx = 0
+char_w = 2
+
+# Bad - describes type, not purpose
+the_string = "bold red"
+```
 
 ### Classes
 - Use `PascalCase`.
@@ -162,8 +180,37 @@ class ConsoleRenderable(Protocol):
 
 ### mypy Ignore Comments
 - Always include the specific error code.
+- Prefer line-level ignores over block-level exclusions.
 ```python
 _console.__dict__ = new_console.__dict__  # type: ignore[assignment]
+```
+
+### Trust the Type System
+- Don't add defensive type checks when types are already annotated.
+- Types should be trusted at runtime.
+```python
+# Bad - unnecessary validation for typed parameter
+def set_width(self, width: int) -> None:
+    if not isinstance(width, int):  # Type already says int
+        raise TypeError("width must be an int")
+    self._width = width
+
+# Good - trust the type annotation
+def set_width(self, width: int) -> None:
+    self._width = width
+```
+
+### Return Type Flexibility
+- Use `Iterable` over `Iterator` for return types to preserve flexibility.
+- This allows changing implementation without breaking callers.
+```python
+# Good - flexible return type
+def iter_lines(self) -> Iterable[str]:
+    return self._lines  # Could change to generator later
+
+# Less flexible
+def iter_lines(self) -> Iterator[str]:
+    return iter(self._lines)
 ```
 
 ---
@@ -378,6 +425,31 @@ assert len(character) == 1, "Character must be a string of length 1"
 assert separator, "separator must not be empty"
 ```
 
+### Defensive Exception Handling
+- Exception handling code must be extremely defensive.
+- Never let exception rendering cause exceptions.
+- Rich displays tracebacks, so traceback code must never fail.
+```python
+# Good - defensive approach
+def format_locals(self, locals: Dict[str, Any]) -> str:
+    try:
+        return self._format_dict(locals)
+    except Exception:
+        return "<error formatting locals>"
+```
+
+### Missing Data Handling
+- Prefer omission over placeholder values that could mislead.
+- Don't show attributes that don't exist.
+```python
+# Good - omit missing attributes
+if hasattr(obj, "name"):
+    yield "name", obj.name
+
+# Bad - show placeholder
+yield "name", getattr(obj, "name", "<missing>")
+```
+
 ---
 
 ## Class Design Patterns
@@ -487,6 +559,91 @@ class _RefreshThread(Thread):
 
 ---
 
+## API Design Principles
+
+### Prefer Subclassing Over Parameters
+- Use subclassing for customization, not new parameters.
+- Complex classes should not gain more parameters.
+```python
+# Good - subclass for customization
+class CustomPrompt(Prompt):
+    def process_response(self, value: str) -> str:
+        return value.strip().lower()
+
+# Bad - adding parameters for every use case
+def prompt(message: str, custom_processor: Callable = None): ...
+```
+
+### Provide Hooks for Varying Needs
+- When needs vary widely, provide hooks rather than parameters.
+- Use callbacks or protocols for user-defined behavior.
+```python
+# Good - hook for custom behavior
+class Console:
+    def on_broken_pipe(self) -> None:
+        """Override to handle broken pipe errors."""
+        raise BrokenPipeError()
+```
+
+### Keep Internal Attributes Internal
+- Don't expose objects with internal attributes users might misuse.
+- Use wrapper objects if you need to expose functionality.
+```python
+# Bad - exposing internal Task object
+def add_task(self) -> Task:  # Task has internal attrs
+    ...
+
+# Good - return opaque ID
+def add_task(self) -> TaskID:
+    ...
+```
+
+### Don't Overload Parameter Types
+- Don't use Union types with very different types.
+- Keep parameter types focused and consistent.
+```python
+# Bad - confusing union
+def configure(setting: Union[Console, Dict[str, Any]]): ...
+
+# Good - clear single type
+def configure(console: Console): ...
+```
+
+### API Consistency
+- New APIs must be consistent with existing patterns.
+- Parameter names should be general, not overly specific.
+```python
+# Bad - too specific
+def print_exception(no_border: bool = False): ...
+
+# Good - general
+def print_exception(style: str = "full"): ...
+```
+
+### No Import-Time Side Effects
+- Never change global terminal state on import.
+- No code execution at import time.
+- Initialization must be lazy.
+```python
+# Bad - runs at import
+import os
+os.system("")  # Enables VT sequences globally
+
+# Good - lazy initialization
+def get_console() -> Console:
+    global _console
+    if _console is None:
+        _console = Console()
+    return _console
+```
+
+### Library Boundaries
+- Libraries should not exit applications.
+- Libraries should not define custom environment variables.
+- Use standard env vars only (COLUMNS, LINES, NO_COLOR, etc.).
+
+---
+
 ## Performance Patterns
 
 ### Local Variable Caching
@@ -537,6 +694,77 @@ return "".join(parts)
 ### Generator vs List Comprehension
 - Use generators for one-time iteration.
 - Use list comprehensions when iterating multiple times.
+
+### Performance Focus
+- Micro-optimizations are generally not worthwhile.
+- Focus on algorithmic improvements for performance.
+- Regex must be performant for high-volume text.
+
+---
+
+## Testing Standards
+
+### Tests Are Mandatory
+- A test is *always* required for code changes.
+- Tests should be treated almost like documentation.
+- Full coverage alone is insufficient.
+
+### One Test Function Per Aspect
+- Each test function should test one specific aspect.
+- Don't combine multiple test scenarios into one function.
+```python
+# Good - separate tests for each aspect
+def test_style_parse_color():
+    assert Style.parse("red").color == Color.parse("red")
+
+def test_style_parse_bold():
+    assert Style.parse("bold").bold == True
+
+def test_style_parse_invalid():
+    with pytest.raises(StyleSyntaxError):
+        Style.parse("not a style")
+
+# Bad - testing everything in one function
+def test_style_parse():
+    assert Style.parse("red").color == Color.parse("red")
+    assert Style.parse("bold").bold == True
+    with pytest.raises(StyleSyntaxError):
+        Style.parse("not a style")
+```
+
+### Tests as Documentation
+- Test names should describe what is being tested.
+- Tests should demonstrate expected behavior.
+- Consider readers who will learn from the tests.
+
+### Examples Must Be Complete
+- Examples should be fully-working.
+- Use Python conventions (snake_case).
+- Examples in docs are for educational purposes - avoid complex typing.
+
+---
+
+## Terminal Compatibility
+
+### Cross-Platform Requirements
+- Visual changes must be tested on Mac, Windows, and Linux.
+- Don't fix one platform at the expense of others.
+
+### Character Width Challenges
+- Terminals don't always agree with `wcswidth`.
+- Character width calculations vary across terminals.
+- Some rendering issues are unfixable due to terminal bugs.
+
+### Emoji Support
+- New emoji likely won't work on most terminals.
+- Emoji in spinners/output must work across all major terminals.
+- Terminal support for new emoji versions is inconsistent.
+
+### Jupyter Platform Fragility
+- Every change to Jupyter support causes complaints somewhere.
+- The Jupyter ecosystem is fragmented.
+- Jupyter changes require extensive cross-platform testing.
+- Fixes that work in JupyterLab may break in VS Code notebooks or Colab.
 
 ---
 
@@ -635,6 +863,13 @@ Areas where conventions need clarification:
 
 5. **Exception Granularity**: When should a new custom exception be created vs.
    using an existing one?
+
+---
+
+## Related Documentation
+
+- [Rejected PR Review Analysis](./rich-rejected-pr-review.md) - Detailed analysis
+  of 376 rejected PRs with extracted rules and patterns.
 
 ---
 
